@@ -1,0 +1,35 @@
+server:
+  port: 8080
+
+spring:
+  cloud:
+    gateway:
+      routes:
+        # --- Canales BFF (cada frontend consume su propia ruta) ---
+        - id: bff-web
+          uri: lb://bff-service
+          predicates:
+            - Path=/web/**
+        - id: bff-mobile
+          uri: lb://bff-service
+          predicates:
+            - Path=/mobile/**
+        # --- Acceso directo a microservicios (StripPrefix quita el "/api") ---
+        - id: accounts-service
+          uri: lb://accounts-service
+          predicates:
+            - Path=/api/accounts/**
+          filters:
+            - StripPrefix=1
+        - id: transactions-service
+          uri: lb://transactions-service
+          predicates:
+            - Path=/api/transactions/**
+          filters:
+            - StripPrefix=1
+        - id: notification-service
+          uri: lb://notification-service
+          predicates:
+            - Path=/api/notifications/**
+          filters:
+            - StripPrefix=1

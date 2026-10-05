@@ -1,0 +1,24 @@
+# ============================================================
+# Configuracion COMPARTIDA por todos los clientes del Config Server
+# (los valores ${VAR:default} se sobreescriben con variables de entorno en Docker)
+# ============================================================
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+  instance:
+    prefer-ip-address: true
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Cada microservicio valida la firma del JWT con las llaves publicas del Auth Server
+          jwk-set-uri: ${JWK_SET_URI:http://localhost:9000/oauth2/jwks}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,circuitbreakers,retries,bulkheads

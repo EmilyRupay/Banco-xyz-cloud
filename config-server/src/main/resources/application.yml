@@ -1,0 +1,20 @@
+server:
+  port: 8888
+
+spring:
+  application:
+    name: config-server
+  profiles:
+    active: native
+  cloud:
+    config:
+      server:
+        native:
+          # Repositorio de configuraciones centralizado (en produccion: Git o S3)
+          search-locations: classpath:/config-repo
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
