@@ -4,3 +4,8 @@
 .vscode
 *.md
 docs
+**/batch-output
+deploy
+monitoring
+scripts
+.env

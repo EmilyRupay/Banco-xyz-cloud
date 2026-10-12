@@ -1,0 +1,29 @@
+flowchart TB
+    U[Usuarios: Web / Movil / ATM] -->|HTTPS 443| R53[Route 53]
+    R53 --> ALB["Application Load Balancer<br/>certificado ACM (TLS)"]
+    subgraph VPC["VPC 10.0.0.0/16"]
+        subgraph PUB["Subredes publicas (2 AZ)"]
+            ALB
+            NAT[NAT Gateway]
+        end
+        subgraph PRIV["Subredes privadas (2 AZ)"]
+            subgraph ECS["Amazon ECS Fargate - cluster banco-xyz"]
+                GW[gateway x2]
+                BFFS[bff-web / bff-mobile / bff-atm x2]
+                SVC[customers / accounts / payments / notification x2..6<br/>Auto Scaling por CPU]
+                INF[config-server / eureka / auth-server]
+                BAT[batch-service x1]
+            end
+            RDS[("Amazon RDS PostgreSQL<br/>Multi-AZ")]
+            MSK[["Amazon MSK (Kafka)<br/>3 brokers"]]
+        end
+    end
+    ALB --> GW
+    GW --> BFFS --> SVC
+    SVC --> RDS
+    SVC --> MSK
+    BAT --> RDS
+    ECR[(Amazon ECR<br/>imagenes)] -.-> ECS
+    SM[Secrets Manager] -.->|DB_PASSWORD| ECS
+    CW[CloudWatch Logs + Metrics + Alarms] -.- ECS
+    S3[(S3: CSV legacy de entrada<br/>y reportes batch)] -.- BAT

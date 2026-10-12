@@ -1,0 +1,28 @@
+# Integracion continua: compila, ejecuta las pruebas (incluida la equivalencia batch vs legacy) y valida el compose.
+name: CI
+
+on:
+  push:
+    branches: [main, master, eft-semana9]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - name: Compilar y probar
+        run: mvn -B verify
+      - name: Equivalencia con el proceso legacy (Shell/awk)
+        run: |
+          D=batch-service/src/main/resources/legacy-data/semana_3
+          ./batch-service/legacy-reference/reporte_diario_legacy.sh $D/movimientos_financieros_diarios.csv
+          ./batch-service/legacy-reference/intereses_mensuales_legacy.sh $D/intereses_trimestrales.csv 2>/dev/null
+          ./batch-service/legacy-reference/estados_anuales_legacy.sh $D/estados_financieros_anuales.csv 2024 | grep -v NETO
+      - name: Validar docker-compose
+        run: docker compose config -q

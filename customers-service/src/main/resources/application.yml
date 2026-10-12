@@ -1,0 +1,6 @@
+spring:
+  application:
+    name: customers-service
+  config:
+    # Spring Boot 3: reemplaza al antiguo bootstrap.yml. Si el Config Server no responde, la app no inicia (fail-fast).
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"

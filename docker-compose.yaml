@@ -1,31 +1,55 @@
-# ============================================================
-# Banco XYZ - Orquestacion completa
-# Levantar:  docker compose up --build -d
-# Detener:   docker compose down        (agregar -v para borrar la BD)
-# ============================================================
-x-java-service: &java-service
+# ======================================================================================
+# Banco XYZ - Orquestacion completa (EFT Desarrollo Backend III)
+#
+#   Levantar todo:            docker compose up --build -d
+#   + monitoreo:              docker compose --profile monitoring up --build -d
+#   Escalar un servicio:      docker compose up -d --scale payments-service=2
+#   Detener:                  docker compose down        (agregar -v para borrar los datos)
+#
+# Solo se publican hacia el host: Gateway HTTPS (8443), Eureka (8761), Auth (9000) y Config (8888).
+# Los microservicios y BFF NO exponen puertos: se accede a ellos unicamente a traves del Gateway.
+# ======================================================================================
+x-java: &java
   restart: unless-stopped
   networks: [bank-net]
+  mem_limit: 512m
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
 
 x-env-common: &env-common
   CONFIG_SERVER_URL: http://config-server:8888
   EUREKA_URL: http://eureka-server:8761/eureka
   JWK_SET_URI: http://auth-server:9000/oauth2/jwks
+  ZIPKIN_URL: http://zipkin:9411/api/v2/spans
+  TRACING_PROBABILITY: ${TRACING_PROBABILITY:-0.0}
+  JAVA_OPTS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -XX:TieredStopAtLevel=1"
+
+x-healthcheck: &hc
+  interval: 10s
+  timeout: 5s
+  retries: 15
+  start_period: 40s
+
+x-depends-cloud: &depends-cloud
+  config-server: { condition: service_healthy }
+  eureka-server: { condition: service_healthy }
+  auth-server: { condition: service_healthy }
 
 services:
 
-  # ---------------- Infraestructura de datos y mensajeria ----------------
+  # ---------------------------------------------------------------- datos y mensajeria
   postgres:
     image: postgres:16-alpine
     container_name: bank-postgres
     environment:
-      POSTGRES_USER: bank
-      POSTGRES_PASSWORD: bank123
+      POSTGRES_USER: ${DB_USER:-bank}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-bank123}
     volumes:
       - pg-data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bank"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-bank}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -49,6 +73,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_NUM_PARTITIONS: 3
+      KAFKA_HEAP_OPTS: "-Xmx384m -Xms384m"
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1"]
       interval: 10s
@@ -58,148 +83,210 @@ services:
     restart: unless-stopped
     networks: [bank-net]
 
-  # ---------------- Infraestructura Spring Cloud ----------------
+  # ---------------------------------------------------------------- infraestructura Spring Cloud
   config-server:
-    <<: *java-service
+    <<: *java
     build: { context: ., dockerfile: config-server/Dockerfile }
     container_name: bank-config-server
     ports: ["8888:8888"]
-    healthcheck: &hc
+    environment:
+      JAVA_OPTS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -XX:TieredStopAtLevel=1"
+    healthcheck:
+      <<: *hc
       test: ["CMD-SHELL", "wget -qO- http://localhost:8888/actuator/health | grep -q UP"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 30s
 
   eureka-server:
-    <<: *java-service
+    <<: *java
     build: { context: ., dockerfile: eureka-server/Dockerfile }
     container_name: bank-eureka-server
     ports: ["8761:8761"]
+    environment:
+      JAVA_OPTS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -XX:TieredStopAtLevel=1"
     healthcheck:
+      <<: *hc
       test: ["CMD-SHELL", "wget -qO- http://localhost:8761/actuator/health | grep -q UP"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 30s
 
   auth-server:
-    <<: *java-service
+    <<: *java
     build: { context: ., dockerfile: auth-server/Dockerfile }
     container_name: bank-auth-server
     ports: ["9000:9000"]
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/actuator/health | grep -q UP"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 30s
-
-  # ---------------- Microservicios de negocio ----------------
-  accounts-service:
-    <<: *java-service
-    build: { context: ., dockerfile: accounts-service/Dockerfile }
-    container_name: bank-accounts-service
-    ports: ["8081:8081"]
     environment:
-      <<: *env-common
-      DB_HOST: postgres
-    depends_on:
-      postgres: { condition: service_healthy }
-      config-server: { condition: service_healthy }
-      eureka-server: { condition: service_healthy }
-      auth-server: { condition: service_healthy }
+      JAVA_OPTS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -XX:TieredStopAtLevel=1"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep -q UP"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/actuator/health | grep -q UP"]
 
-  transactions-service:
-    <<: *java-service
-    build: { context: ., dockerfile: transactions-service/Dockerfile }
-    container_name: bank-transactions-service
-    ports: ["8082:8082"]
+  # ---------------------------------------------------------------- microservicios de negocio
+  customers-service:
+    <<: *java
+    build: { context: ., dockerfile: customers-service/Dockerfile }
     environment:
       <<: *env-common
       DB_HOST: postgres
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
+      <<: *depends-cloud
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }
-      config-server: { condition: service_healthy }
-      eureka-server: { condition: service_healthy }
-      auth-server: { condition: service_healthy }
     healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8087/actuator/health | grep -q UP"]
+
+  accounts-service:
+    <<: *java
+    build: { context: ., dockerfile: accounts-service/Dockerfile }
+    environment:
+      <<: *env-common
+      DB_HOST: postgres
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      <<: *depends-cloud
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep -q UP"]
+
+  payments-service:
+    <<: *java
+    build: { context: ., dockerfile: payments-service/Dockerfile }
+    environment:
+      <<: *env-common
+      DB_HOST: postgres
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      <<: *depends-cloud
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      <<: *hc
       test: ["CMD-SHELL", "wget -qO- http://localhost:8082/actuator/health | grep -q UP"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
 
   notification-service:
-    <<: *java-service
+    <<: *java
     build: { context: ., dockerfile: notification-service/Dockerfile }
-    container_name: bank-notification-service
-    ports: ["8083:8083"]
     environment:
       <<: *env-common
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
+      <<: *depends-cloud
       kafka: { condition: service_healthy }
-      config-server: { condition: service_healthy }
-      eureka-server: { condition: service_healthy }
-      auth-server: { condition: service_healthy }
     healthcheck:
+      <<: *hc
       test: ["CMD-SHELL", "wget -qO- http://localhost:8083/actuator/health | grep -q UP"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
 
-  # ---------------- BFF y Gateway ----------------
-  bff-service:
-    <<: *java-service
-    build: { context: ., dockerfile: bff-service/Dockerfile }
-    container_name: bank-bff-service
-    ports: ["8084:8084"]
+  batch-service:
+    <<: *java
+    build: { context: ., dockerfile: batch-service/Dockerfile }
+    container_name: bank-batch-service
     environment:
       <<: *env-common
+      DB_HOST: postgres
+      BATCH_RUN_ON_STARTUP: "true"          # ejecuta los 3 jobs al iniciar (demo)
+      BATCH_OUTPUT_DIR: /app/batch-output
+      # Para procesar otros archivos: montar una carpeta y usar BATCH_INPUT_DIR=file:/app/input
+    volumes:
+      - batch-output:/app/batch-output
     depends_on:
-      config-server: { condition: service_healthy }
-      eureka-server: { condition: service_healthy }
-      auth-server: { condition: service_healthy }
-      accounts-service: { condition: service_healthy }
-      transactions-service: { condition: service_healthy }
+      <<: *depends-cloud
+      postgres: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8084/actuator/health | grep -q UP"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8090/actuator/health | grep -q UP"]
 
+  # ---------------------------------------------------------------- Backend for Frontend (uno por canal)
+  bff-web:
+    <<: *java
+    build: { context: ., dockerfile: bff-web/Dockerfile }
+    environment: *env-common
+    depends_on:
+      <<: *depends-cloud
+      accounts-service: { condition: service_healthy }
+      payments-service: { condition: service_healthy }
+      customers-service: { condition: service_healthy }
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8084/actuator/health | grep -q UP"]
+
+  bff-mobile:
+    <<: *java
+    build: { context: ., dockerfile: bff-mobile/Dockerfile }
+    environment: *env-common
+    depends_on:
+      <<: *depends-cloud
+      accounts-service: { condition: service_healthy }
+      payments-service: { condition: service_healthy }
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8085/actuator/health | grep -q UP"]
+
+  bff-atm:
+    <<: *java
+    build: { context: ., dockerfile: bff-atm/Dockerfile }
+    environment: *env-common
+    depends_on:
+      <<: *depends-cloud
+      accounts-service: { condition: service_healthy }
+      payments-service: { condition: service_healthy }
+    healthcheck:
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8086/actuator/health | grep -q UP"]
+
+  # ---------------------------------------------------------------- API Gateway (unico punto de entrada, HTTPS)
   gateway:
-    <<: *java-service
+    <<: *java
     build: { context: ., dockerfile: gateway/Dockerfile }
     container_name: bank-gateway
-    ports: ["8080:8080"]
+    ports: ["8443:8443"]
     environment:
       <<: *env-common
+      SPRING_PROFILES_ACTIVE: ssl
+      AUTH_SERVER_URL: http://auth-server:9000
+      SSL_KEYSTORE_PASSWORD: ${SSL_KEYSTORE_PASSWORD:-changeit}
     depends_on:
-      config-server: { condition: service_healthy }
-      eureka-server: { condition: service_healthy }
-      auth-server: { condition: service_healthy }
-      bff-service: { condition: service_healthy }
+      <<: *depends-cloud
+      bff-web: { condition: service_healthy }
+      bff-mobile: { condition: service_healthy }
+      bff-atm: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
+      <<: *hc
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9080/actuator/health | grep -q UP"]
+
+  # ---------------------------------------------------------------- monitoreo (perfil opcional "monitoring")
+  zipkin:
+    image: openzipkin/zipkin-slim:3
+    container_name: bank-zipkin
+    profiles: [monitoring]
+    ports: ["9411:9411"]
+    networks: [bank-net]
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: bank-prometheus
+    profiles: [monitoring]
+    ports: ["9090:9090"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks: [bank-net]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: bank-grafana
+    profiles: [monitoring]
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]
+    networks: [bank-net]
 
 volumes:
   pg-data:
+  batch-output:
 
 networks:
   bank-net:

@@ -1,0 +1,20 @@
+# Prometheus descubre AUTOMATICAMENTE todas las instancias registradas en Eureka (incluidas las escaladas con --scale)
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: banco-xyz-eureka
+    metrics_path: /actuator/prometheus
+    eureka_sd_configs:
+      - server: http://eureka-server:8761/eureka
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__meta_eureka_app_name]
+        target_label: application
+      - source_labels: [__meta_eureka_app_instance_id]
+        target_label: instance
+      # el gateway expone metricas en su puerto de administracion (9080), no en el puerto HTTPS
+      - source_labels: [__meta_eureka_app_name, __meta_eureka_app_instance_hostname]
+        regex: GATEWAY;(.*)
+        target_label: __address__
+        replacement: ${1}:9080

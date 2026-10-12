@@ -32,7 +32,14 @@ public class TransactionEventsListener {
         String mensaje = "Se registro un(a) %s de $%s en la cuenta %d"
                 .formatted(event.tipo(), event.monto(), event.cuentaId());
 
-        if (store.addIfAbsent(new Notification(event.eventId(), event.cuentaId(), mensaje, Instant.now()))) {
+        if (store.addIfAbsent(new Notification(
+        event.eventId(),
+        "TRANSACCION",
+        "INFO",
+        event.cuentaId(),
+        "EMAIL",
+        mensaje,
+        Instant.now()))) {
             log.info("NOTIFICACION ENVIADA -> {}", mensaje);
         } else {
             log.warn("Evento duplicado {} ignorado (idempotencia)", event.eventId());

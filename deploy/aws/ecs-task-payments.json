@@ -1,0 +1,41 @@
+{
+  "family": "banco-xyz-payments-service",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::<CUENTA>:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::<CUENTA>:role/banco-xyz-task-role",
+  "containerDefinitions": [
+    {
+      "name": "payments-service",
+      "image": "<CUENTA>.dkr.ecr.us-east-1.amazonaws.com/banco-xyz/payments-service:latest",
+      "essential": true,
+      "portMappings": [{ "containerPort": 8082, "protocol": "tcp" }],
+      "environment": [
+        { "name": "CONFIG_SERVER_URL", "value": "http://config-server.banco.local:8888" },
+        { "name": "EUREKA_URL", "value": "http://eureka-server.banco.local:8761/eureka" },
+        { "name": "JWK_SET_URI", "value": "http://auth-server.banco.local:9000/oauth2/jwks" },
+        { "name": "KAFKA_BOOTSTRAP_SERVERS", "value": "<brokers-msk>:9092" },
+        { "name": "DB_HOST", "value": "<endpoint-rds>.us-east-1.rds.amazonaws.com" },
+        { "name": "JAVA_OPTS", "value": "-XX:MaxRAMPercentage=75" }
+      ],
+      "secrets": [
+        { "name": "DB_USER", "valueFrom": "arn:aws:secretsmanager:us-east-1:<CUENTA>:secret:banco-xyz/prod:DB_USER::" },
+        { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-east-1:<CUENTA>:secret:banco-xyz/prod:DB_PASSWORD::" }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "wget -qO- http://localhost:8082/actuator/health/liveness | grep -q UP || exit 1"],
+        "interval": 15, "timeout": 5, "retries": 5, "startPeriod": 90
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/banco-xyz",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "payments"
+        }
+      }
+    }
+  ]
+}

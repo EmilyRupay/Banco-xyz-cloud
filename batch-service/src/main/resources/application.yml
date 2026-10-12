@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: batch-service
+  config:
+    # La configuracion real (BD, tasas, chunk, reintentos...) vive en config-server/config-repo/batch-service.yml
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
+  batch:
+    job:
+      # Los jobs se lanzan por API, por calendario (scheduler) o por el runner de demo; nunca automaticamente al iniciar
+      enabled: false

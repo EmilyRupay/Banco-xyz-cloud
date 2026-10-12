@@ -1,199 +1,144 @@
-# Banco XYZ – Microservicios seguros y resilientes en la nube
+# Banco XYZ – Modernización del sistema legacy a microservicios en la nube
 
-Proyecto de la **Sumativa 3 (Semana 8) – Desarrollo Backend III (PBY2203)**.
-Moderniza el sistema legacy del Banco XYZ (datos de `bank_legacy_data`) como una arquitectura de microservicios
-con **Spring Cloud**, protegida con **OAuth 2.0 + JWT**, tolerante a fallos con **Resilience4j**, orientada a eventos con
-**Apache Kafka** y completamente **dockerizada** con **Docker Compose**.
+**Evaluación Final Transversal – Desarrollo Backend III (PBY2203) · "Desarrollo Backend Avanzado: Spring Cloud y Batch"**
 
-## Objetivo
+El Banco XYZ opera hace más de 30 años sobre un mainframe con programas **COBOL y scripts Shell**. Este proyecto
+reemplaza esa plataforma por una arquitectura de **microservicios Spring Boot / Spring Cloud**, con procesos batch en
+**Spring Batch**, un **Backend for Frontend por canal** (web, móvil y cajeros), seguridad **OAuth2 + JWT + HTTPS**,
+tolerancia a fallos con **Resilience4j**, eventos en tiempo real con **Apache Kafka**, monitoreo con
+**Prometheus/Grafana/Zipkin** y despliegue con **Docker Compose** preparado para **AWS**.
 
-| Requerimiento de la sumativa | Dónde se implementa |
+| Documento | Contenido |
 |---|---|
-| 1. Implementar OAuth 2.0 | `auth-server` (Spring Authorization Server) + todos los demás como *Resource Servers* |
-| 2. Dockerizar los microservicios | Un `Dockerfile` multi-etapa dentro de cada módulo |
-| 3. Configurar `docker-compose.yaml` | `docker-compose.yaml` en la raíz (10 contenedores) |
-| IL6 – Spring Cloud (Config, Eureka, Gateway) | `config-server`, `eureka-server`, `gateway` |
-| IL7 – Tolerancia a fallos (Resilience4j) | `bff-service`: Circuit Breaker + Retry + Bulkhead + Fallback |
-| IL8 – Mensajería asíncrona (Kafka) | `transactions-service` (productor) → `notification-service` (consumidor) |
-| IL9 – Seguridad en entornos distribuidos | Scopes por canal, validación JWT en Gateway **y** en cada servicio |
+| [`readme.md`](readme.md) | Este archivo: visión general, arquitectura y organización del código |
+| [`instrucciones.md`](instrucciones.md) | Paso a paso para ejecutar y probar cada componente |
+| [`despliegue.md`](despliegue.md) | Despliegue en la nube (AWS: EC2 + Docker Compose y ECS Fargate + RDS + MSK) |
+| `docs/informe_tecnico.pdf` | Informe técnico con diagramas (arquitectura, casos de uso, componentes, secuencia) |
+| `docs/diagramas/` | Diagramas en PNG y su fuente Mermaid |
 
-## Arquitectura
+---
 
-```mermaid
-flowchart LR
-    C[Cliente Web / Móvil] -->|1. token| A[auth-server :9000]
-    C -->|2. Bearer JWT| G[gateway :8080]
-    G --> B[bff-service :8084]
-    G --> AC[accounts-service :8081]
-    G --> T[transactions-service :8082]
-    G --> N[notification-service :8083]
-    B -->|Resilience4j| AC
-    B -->|Resilience4j| T
-    T -->|evento transactions.created| K[(Kafka)]
-    K --> N
-    AC --> P[(PostgreSQL accounts_db)]
-    T --> P2[(PostgreSQL transactions_db)]
-    CS[config-server :8888] -.configuración.-> G & B & AC & T & N
-    E[eureka-server :8761] -.registro y descubrimiento.-> G & B & AC & T & N
-```
+## 1. Cumplimiento de los requerimientos
+
+### Parte 1 – Migración de procesos batch (Spring Batch) → `batch-service`
+
+| Requerimiento | Implementación |
+|---|---|
+| Reescribir los procesos en Spring Batch | 3 jobs: `reporteTransaccionesDiariasJob`, `calculoInteresesMensualesJob`, `estadosCuentaAnualesJob`, sobre los CSV de [`fin_legacy_data`](https://github.com/KariVillagran/fin_legacy_data) |
+| Jobs con steps de lectura, proceso y escritura | `FlatFileItemReader` → `ItemProcessor` (reglas legacy) → `JdbcBatchItemWriter` (válidos) / rechazados (`ClassifierCompositeItemWriter`) → tasklets SQL de agregación → exportación a CSV |
+| Manejo de excepciones y reintentos | `faultTolerant().retry(TransientDataAccessException…)`, `retryLimit(3)`, *backoff* exponencial; `skip(FlatFileParseException)` con registro en `bt_registro_rechazado` |
+| Optimizar grandes volúmenes | Chunks de 200 con escritura JDBC por lotes, **particionamiento** en 4 hilos (intereses) y **step multihilo** (estados anuales) |
+| Finalización y reejecución automática | `JobRepository` en PostgreSQL, `startLimit`, reinicio desde el último *commit* y `AutoRestartJobListener` (reintenta un job FAILED tras 20 s, máx. 2 veces; no reintenta errores de calidad de datos) |
+| Integridad y equivalencia con el legacy | Steps idempotentes (limpieza por clave de proceso), redondeo `HALF_UP` = `ROUNDED` de COBOL y prueba automática `EquivalenciaLegacyIntegrationTest` que compara contra los scripts Shell/awk de `batch-service/legacy-reference/` |
+
+### Parte 2 – Backend for Frontend → `bff-web`, `bff-mobile`, `bff-atm`
+
+| Requerimiento | Implementación |
+|---|---|
+| BFF Web (datos completos) | `GET /web/customers/{id}/dashboard` agrega perfil + todas las cuentas + movimientos; `GET /web/accounts/{id}/summary`; `POST /web/transfers` |
+| BFF Móvil (respuestas ligeras) | Solo campos esenciales, máx. 5 movimientos pedidos al origen, nulos omitidos, **gzip**, **ETag/304** y `Cache-Control` |
+| BFF Cajeros (seguro y eficiente) | `GET /atm/accounts/{id}/balance`, `POST /atm/withdrawals`: terminal registrado (`X-ATM-ID`), `Idempotency-Key` obligatoria, montos múltiplos de $5.000, sin datos personales, *fail-safe* (ante duda no dispensa) |
+| Autenticación y autorización por canal | Un cliente OAuth2 por canal (`web-client`, `mobile-client`, `atm-client`) con scopes `web` / `mobile` / `atm`; validados en el Gateway **y** en cada BFF |
+| Comunicaciones seguras | Gateway solo **HTTPS (TLS 1.2/1.3)** en el puerto 8443, tokens JWT firmados con RSA, certificados (ACM en AWS) |
+| BFF independientes | Tres módulos Maven, imágenes y despliegues separados: cada equipo frontend evoluciona su BFF en paralelo |
+
+### Parte 3 – Microservicios resilientes con Spring Cloud
+
+| Requerimiento | Implementación |
+|---|---|
+| Gestión de Cuentas | `accounts-service`: apertura (valida titular), cierre (saldo 0), bloqueo/desbloqueo, cambio de producto, débitos/créditos atómicos e idempotentes |
+| Procesamiento de Pagos | `payments-service`: depósitos, retiros, pagos y transferencias (**SAGA con compensación**), idempotencia por `Idempotency-Key`, detección de fraude |
+| Gestión de Clientes | `customers-service`: alta con validación de RUT, actualización, baja lógica, bloqueo optimista (`@Version`) |
+| Spring Cloud Config | `config-server` (perfil *native*, carpeta `config-repo`) |
+| Eureka | `eureka-server` + todos los servicios registrados con id único por instancia |
+| Balanceo y enrutamiento | `spring-cloud-gateway` (`lb://`), `@LoadBalanced RestClient`, filtros `Retry` y `CircuitBreaker` por ruta |
+| OAuth2 + Spring Security | `auth-server` (Spring Authorization Server) y *Resource Servers* con scopes `bank.read`, `bank.write`, `batch.admin` |
+| Resilience4j + comportamiento alternativo | Retry + CircuitBreaker + Bulkhead + **fallbacks** (datos degradados en web/móvil, 503 seguro en ATM y pagos) |
+| Tópicos de eventos, productores y consumidores | `transactions.completed`, `security.alerts`, `accounts.events` (+ `.DLT`); productores en pagos/cuentas/clientes, consumidor idempotente en `notification-service` |
+| Preparado para AWS | Imágenes multi-etapa no-root, *health probes*, configuración por variables de entorno, scripts ECR/EC2/ECS y override para RDS/MSK/CloudWatch |
+| Docker Compose | `docker-compose.yaml` con 14 contenedores + perfil `monitoring` (Prometheus, Grafana, Zipkin) |
+| Consistencia de datos | BD por servicio, `SELECT … FOR UPDATE`, operaciones idempotentes, SAGA con compensación, `@Version`, Kafka `acks=all` + idempotencia |
+| Monitoreo y registro | Actuator + Micrometer/Prometheus, dashboard Grafana, trazas distribuidas (traceId en logs, Zipkin), `X-Correlation-Id` y log de acceso en el Gateway, auditoría ATM |
+| Escalabilidad horizontal | Servicios sin estado, sin puertos fijos: `docker compose up -d --scale payments-service=3`; Kafka con 3 particiones; Auto Scaling en ECS |
+
+## 2. Arquitectura
+
+![Arquitectura](docs/diagramas/arquitectura.png)
 
 | Módulo | Puerto | Rol |
 |---|---|---|
-| `config-server` | 8888 | Configuración centralizada (carpeta `config-repo`) |
-| `eureka-server` | 8761 | Service Discovery |
-| `auth-server` | 9000 | Servidor de autorización OAuth 2.0 / OIDC, emite JWT |
-| `gateway` | 8080 | Punto de entrada único; valida JWT y enruta |
-| `bff-service` | 8084 | *Backend for Frontend*: `/web/**` (respuesta completa) y `/mobile/**` (respuesta liviana) |
-| `accounts-service` | 8081 | Cuentas (migradas desde `intereses.csv`) |
-| `transactions-service` | 8082 | Movimientos (migrados desde `cuentas_anuales.csv`); publica eventos |
-| `notification-service` | 8083 | Consume eventos de Kafka y genera notificaciones |
-| `postgres` / `kafka` | 5432 / 9092 | Base de datos y broker de mensajes |
+| `gateway` | **8443 (HTTPS)** | Punto de entrada único: TLS, validación JWT/scope, enrutamiento con balanceo, CircuitBreaker |
+| `auth-server` | 9000 | Servidor de autorización OAuth2/OIDC (emite JWT) |
+| `config-server` | 8888 | Configuración centralizada (`config-repo/*.yml`) |
+| `eureka-server` | 8761 | Descubrimiento de servicios |
+| `bff-web` / `bff-mobile` / `bff-atm` | 8084 / 8085 / 8086 | Backend for Frontend por canal |
+| `customers-service` | 8087 | Gestión de Clientes |
+| `accounts-service` | 8081 | Gestión de Cuentas y saldos |
+| `payments-service` | 8082 | Procesamiento de Pagos |
+| `notification-service` | 8083 | Consumidor de eventos (notificaciones y alertas) |
+| `batch-service` | 8090 | Procesos batch (Spring Batch) |
+| `postgres` / `kafka` | 5432 / 9092 | Datos (una BD por servicio) y mensajería |
 
-## Tecnologías
+### Procesos batch
 
-Java 17 · Spring Boot 3.3.5 · Spring Cloud 2023.0.3 · Spring Authorization Server · Spring Security (Resource Server) ·
-Resilience4j · Spring Kafka (Kafka 3.8, modo KRaft) · Spring Data JPA · PostgreSQL 16 · Docker / Docker Compose · Maven multi-módulo
+![Jobs](docs/diagramas/batch_jobs.png)
 
-## Estructura del código
+Resultado sobre `fin_legacy_data/semana_3` (1.000 registros por archivo), **idéntico** al proceso legacy:
+
+| Job | Leídos | Válidos | Rechazados | Resultado |
+|---|---|---|---|---|
+| Transacciones diarias | 1.000 | 392 (65 con alerta de monto alto) | 608 | 239 días; créditos $244.500; débitos $284.900 |
+| Intereses mensuales | 1.000 | 50 cuentas | 950 (347 duplicados) | intereses: ahorro $285,00 · hipoteca $437,50 · préstamo $2.505,00 |
+| Estados anuales 2024 | 1.000 | 604 | 396 | 20 cuentas; depósitos $412.500 · retiros $305.000 · compras $394.000 · pagos $77.500 |
+
+## 3. Tecnologías
+
+Java 17 · Spring Boot 3.3.5 · Spring Cloud 2023.0.3 · Spring Batch 5.1 · Spring Authorization Server · Spring Security
+Resource Server · Spring Cloud Gateway · Eureka · Config Server · Resilience4j · Spring Kafka (Kafka 3.8 KRaft) · Spring
+Data JPA · PostgreSQL 16 · Micrometer (Prometheus, Tracing/Zipkin) · Grafana · Docker / Docker Compose · Maven
+multi-módulo · GitHub Actions · AWS (EC2, ECR, ECS Fargate, RDS, MSK, ALB/ACM, Secrets Manager, CloudWatch)
+
+## 4. Estructura del código
 
 ```
 banco-xyz-cloud/
-├── pom.xml                      # POM padre (versiones de Boot y Cloud)
-├── docker-compose.yaml          # Orquestación completa
-├── docker/postgres/init.sql     # Crea accounts_db y transactions_db
-├── config-server/               # + src/main/resources/config-repo/*.yml  (configuración de todos los servicios)
+├── pom.xml                       POM padre (12 módulos)
+├── docker-compose.yaml           Orquestación local completa (+ perfil monitoring)
+├── .env.example                  Variables/secretos de ejemplo
+├── config-server/                + src/main/resources/config-repo/*.yml (config de TODOS los servicios)
 ├── eureka-server/
-├── auth-server/                 # AuthorizationServerConfig: clientes, usuarios, JWK
-├── gateway/                     # Rutas (config-repo/gateway.yml) + SecurityConfig reactivo
-├── bff-service/                 # BffController, AccountsClient / TransactionsClient (Resilience4j)
-├── accounts-service/            # Entidad Cuenta + CuentaDataLoader (limpieza del CSV)
-├── transactions-service/        # Movimiento + publicación de eventos Kafka
-├── notification-service/        # @KafkaListener + idempotencia + Dead Letter Topic
-├── scripts/                     # demo.sh / demo.ps1 (generan la evidencia de ejecución)
-└── docs/PROPUESTA_TECNICA.md
+├── auth-server/                  Clientes OAuth2 por canal, llaves RSA
+├── gateway/                      Rutas, HTTPS, CircuitBreaker, X-Correlation-Id
+├── customers-service/            Clientes (RUT, perfil, alertas por cambio de contacto)
+├── accounts-service/             Cuentas: apertura, cierre, bloqueo, débito/crédito idempotente
+├── payments-service/             Depósitos, retiros, pagos, transferencias (SAGA), fraude
+├── notification-service/         Consumidores Kafka + DLT
+├── bff-web/  bff-mobile/  bff-atm/
+├── batch-service/
+│   ├── src/main/java/.../domain       Reglas de negocio migradas (Java puro, testeable)
+│   ├── src/main/java/.../jobs         Configuración de los 3 jobs
+│   ├── src/main/java/.../support      Listeners (skip, reinicio automático), lectura/exportación CSV
+│   ├── src/main/resources/legacy-data Datos de fin_legacy_data (semana_1..3)
+│   ├── src/test/...                   Pruebas unitarias y de equivalencia con el legacy
+│   └── legacy-reference/              Proceso legacy reconstruido en Shell/awk (para comparar)
+├── monitoring/                   Prometheus (descubrimiento vía Eureka) y dashboard Grafana
+├── deploy/aws/                   EC2 user-data, push a ECR, override AWS, tarea ECS, autoscaling
+├── scripts/                      demo.sh / demo.ps1 (recorrido de pruebas completo)
+├── docs/                         Informe técnico, guion del video y diagramas
+└── .github/workflows/ci.yml      Integración continua
 ```
-Cada módulo contiene su propio `Dockerfile`.
 
-## Requisitos
-
-* Docker Desktop (o Docker Engine) con Compose v2 – **≈ 4 GB de RAM libres** para los 10 contenedores
-* No se necesita Java ni Maven instalados: la compilación ocurre dentro de Docker
-
-## Cómo ejecutar
+## 5. Inicio rápido
 
 ```bash
-git clone <URL-de-tu-repositorio>
-cd banco-xyz-cloud
-docker compose up --build -d
-docker compose ps            # esperar a que todos digan "healthy" (≈ 3-5 minutos la primera vez)
+git clone https://github.com/EmilyRupay/Banco-xyz-cloud.git
+cd Banco-xyz-cloud
+docker compose up --build -d          # 1ª vez: 5-10 min. Requiere ~8 GB de RAM para Docker
+docker compose ps                     # esperar a que todos estén "healthy"
+./scripts/demo.sh                     # Windows: .\scripts\demo.ps1
 ```
 
-El orden de arranque es automático (`depends_on` con *healthchecks*):
-`postgres/kafka/config-server/eureka-server/auth-server → accounts/transactions/notification → bff → gateway`.
+Detalle completo en [`instrucciones.md`](instrucciones.md). Despliegue en AWS en [`despliegue.md`](despliegue.md).
 
-Verificar: Eureka en <http://localhost:8761> debe mostrar `GATEWAY`, `BFF-SERVICE`, `ACCOUNTS-SERVICE`,
-`TRANSACTIONS-SERVICE` y `NOTIFICATION-SERVICE` registrados.
-
-Detener: `docker compose down` (agrega `-v` para borrar también los datos de PostgreSQL).
-
-### Ejecución en desarrollo (sin contenedores para los servicios)
-
-```bash
-docker compose up -d postgres kafka          # solo infraestructura
-mvn -pl config-server spring-boot:run        # en terminales separadas, en este orden:
-mvn -pl eureka-server spring-boot:run
-mvn -pl auth-server spring-boot:run
-mvn -pl accounts-service spring-boot:run     # ...y así con el resto
-```
-Los valores por defecto (`localhost`) están definidos en `config-repo` con la sintaxis `${VARIABLE:valor}`.
-
-## Seguridad (OAuth 2.0)
-
-Todas las llamadas requieren un **access token JWT**. Se obtiene del `auth-server`:
-
-| Cliente | Secreto | Grant | Scopes |
-|---|---|---|---|
-| `web-client` | `web-secret` | client_credentials | `web`, `bank.read` |
-| `mobile-client` | `mobile-secret` | client_credentials | `mobile`, `bank.read` |
-| `admin-client` | `admin-secret` | client_credentials | `web`, `mobile`, `bank.read`, `bank.write` |
-| `postman-client` | `postman-secret` | authorization_code (usuarios `ejecutivo`/`ejecutivo123`, `cliente`/`cliente123`) | todos |
-
-| Endpoint (vía Gateway :8080) | Scope requerido |
-|---|---|
-| `GET /web/accounts/{id}/summary` | `web` |
-| `GET /mobile/accounts/{id}/summary` | `mobile` |
-| `GET /api/accounts`, `/api/transactions/account/{id}`, `/api/notifications` | `bank.read` |
-| `POST /api/transactions` | `bank.write` |
-
-> Las credenciales son solo para fines académicos. En producción los secretos se inyectan con un gestor de secretos
-> (Vault, AWS Secrets Manager…) y no se versionan.
-
-## Pruebas manuales
-
-Hay scripts que ejecutan todo el recorrido: `./scripts/demo.sh` (Linux/macOS/Git Bash) o `.\scripts\demo.ps1` (PowerShell).
-Paso a paso (usa `curl.exe` en PowerShell):
-
-```bash
-# 1) Sin token -> 401
-curl -i http://localhost:8080/web/accounts/101/summary
-
-# 2) Obtener token del canal web
-TOKEN=$(curl -s -u web-client:web-secret -d grant_type=client_credentials -d "scope=web bank.read" \
-        http://localhost:9000/oauth2/token | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
-
-# 3) Canal web (respuesta completa)  ->  200
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/web/accounts/101/summary
-
-# 4) Mismo token en el canal móvil -> 403 (le falta el scope "mobile")
-curl -i -H "Authorization: Bearer $TOKEN" http://localhost:8080/mobile/accounts/101/summary
-
-# 5) Registrar una transacción (necesita admin-client / bank.write) -> publica evento en Kafka
-ADMIN=$(curl -s -u admin-client:admin-secret -d grant_type=client_credentials \
-        -d "scope=web mobile bank.read bank.write" http://localhost:9000/oauth2/token \
-        | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
-curl -s -X POST http://localhost:8080/api/transactions -H "Authorization: Bearer $ADMIN" \
-     -H "Content-Type: application/json" \
-     -d '{"cuentaId":101,"tipo":"deposito","monto":25000,"descripcion":"Deposito de prueba"}'
-
-# 6) Ver la notificación generada por el consumidor
-docker logs bank-notification-service | grep NOTIFICACION
-curl -s -H "Authorization: Bearer $ADMIN" http://localhost:8080/api/notifications
-```
-
-### Probar la resiliencia (Circuit Breaker)
-
-```bash
-docker stop bank-accounts-service                      # simulamos la caída de un servicio
-for i in 1 2 3 4 5 6 7 8; do                           # el BFF responde igual, con "degraded": true
-  curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/web/accounts/101/summary; echo; done
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8084/actuator/circuitbreakers   # estado: OPEN
-docker start bank-accounts-service                     # tras ~15 s pasa a HALF_OPEN y luego CLOSED
-```
-Las primeras llamadas tardan ≈1,5 s (3 intentos del *Retry*); cuando el circuito se abre, el *fallback* responde al instante.
-
-## Datos y calidad (Spring Batch-like en el arranque)
-
-Los CSV legacy se limpian al iniciar cada servicio (ver logs de `accounts-service` y `transactions-service`):
-
-* `intereses.csv` → 1000 filas → **50 cuentas** válidas (se descartan saldos vacíos, edades fuera de 18–100, tipos `-1`/`unknown`, nombre `Unknown`; se eliminan duplicados por `cuenta_id`).
-* `cuentas_anuales.csv` → 1000 filas → **686 movimientos** (se normalizan 4 formatos de fecha y `depósito`→`deposito`; se descartan montos vacíos, ≤ 0 y tipos inválidos).
-* Los movimientos existen para las cuentas **101–120**; las cuentas 121–150 existen pero sin historial.
-
-## Evidencia de ejecución sugerida
-
-1. `docker compose ps` con todos los contenedores `healthy`
-2. Panel de Eureka con los 5 servicios registrados
-3. Petición sin token (401) y con token (200) · canal web vs. móvil · 403 por scope incorrecto
-4. `POST /api/transactions` + log `NOTIFICACION ENVIADA` en `notification-service`
-5. Prueba de resiliencia: respuesta `degraded: true` y `/actuator/circuitbreakers` en estado `OPEN`
-6. Logs de arranque de cada microservicio
-
-## Solución de problemas
-
-| Síntoma | Causa / solución |
-|---|---|
-| Un servicio queda `unhealthy` al inicio | Espera 1-2 min más; los healthchecks reintentan. Revisa `docker compose logs <servicio>` |
-| `401` con un token recién emitido | El token dura 30 min; si reiniciaste `auth-server` las llaves cambian: solicita un token nuevo |
-| `503` desde el Gateway justo después de levantar | Eureka aún no propaga el registro (≈30 s). Reintenta |
-| Falta memoria | Aumenta la RAM de Docker Desktop (Settings → Resources) a 4 GB o más |
-| Puerto ocupado | Cambia el mapeo `"host:contenedor"` en `docker-compose.yaml` |
+> Las credenciales del repositorio son **solo académicas**. En producción los secretos se inyectan desde AWS Secrets
+> Manager y no se versionan (ver `despliegue.md`).

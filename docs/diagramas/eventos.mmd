@@ -1,0 +1,10 @@
+flowchart LR
+    PA[payments-service] -->|TRANSACTION_COMPLETED| T1[[transactions.completed<br/>3 particiones, clave = cuentaId]]
+    PA -->|MONTO_ALTO, RETIROS_FRECUENTES,<br/>COMPENSACION_FALLIDA| T2[[security.alerts]]
+    AC[accounts-service] -->|CUENTA_BLOQUEADA| T2
+    CU[customers-service] -->|CAMBIO_DATOS_CONTACTO| T2
+    AC -->|ACCOUNT_OPENED / CLOSED / BLOCKED| T3[[accounts.events]]
+    T1 & T2 & T3 --> NS["notification-service<br/>grupo notification-service<br/>3 hilos, idempotente por eventId"]
+    NS -->|error x3| DLT[[topico.DLT]]
+    NS --> PUSH[PUSH / SMS / EMAIL simulados]
+    NS --> MET[Metricas Prometheus<br/>bank_security_alerts_total]

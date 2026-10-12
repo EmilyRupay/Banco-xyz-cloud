@@ -10,7 +10,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 
-/** Este microservicio es un Resource Server: solo acepta JWT validos emitidos por el Auth Server. */
+/** Resource Server: solo acepta JWT validos emitidos por el Auth Server. Lectura bank.read, escritura bank.write. */
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
@@ -20,8 +20,9 @@ public class SecurityConfig {
         http.csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/health/**").permitAll()
+                        .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
                         .requestMatchers(HttpMethod.GET, "/accounts/**").hasAuthority("SCOPE_bank.read")
+                        .requestMatchers("/accounts/**").hasAuthority("SCOPE_bank.write")
                         .anyRequest().denyAll())
                 .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()));
         return http.build();

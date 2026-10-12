@@ -87,7 +87,8 @@ public class CuentaDataLoader implements ApplicationRunner {
             int edad = Integer.parseInt(edadTxt);
             if (saldo.signum() <= 0 || edad < 18 || edad > 100) return Optional.empty();
 
-            return Optional.of(new Cuenta(id, nombre, saldo, edad, tipo));
+            return Optional.of(new Cuenta(id, CatalogoTitulares.clienteId(nombre), nombre, saldo, edad, tipo,
+                    java.time.LocalDate.of(2024, 1, 1)));
         } catch (NumberFormatException ex) {
             return Optional.empty();
         }

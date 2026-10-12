@@ -2,5 +2,10 @@ package cl.duoc.banco.notifications;
 
 import java.time.Instant;
 
-public record Notification(String eventId, Long cuentaId, String mensaje, Instant recibidaEn) {
+/**
+ * @param categoria TRANSACCION, CUENTA o SEGURIDAD
+ * @param canal     canal simulado de envio (EMAIL, SMS, PUSH)
+ */
+public record Notification(String eventId, String categoria, String severidad, Long cuentaId, String canal,
+                           String mensaje, Instant recibidaEn) {
 }

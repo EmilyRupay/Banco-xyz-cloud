@@ -16,7 +16,7 @@
     <version>1.0.0</version>
     <packaging>pom</packaging>
     <name>banco-xyz-cloud</name>
-    <description>Banco XYZ - Microservicios con Spring Cloud, OAuth2, Resilience4j, Kafka y Docker</description>
+    <description>Banco XYZ - Modernizacion: Spring Batch, BFF por canal y microservicios con Spring Cloud</description>
 
     <properties>
         <java.version>17</java.version>
@@ -24,14 +24,22 @@
     </properties>
 
     <modules>
+        <!-- Infraestructura Spring Cloud -->
         <module>config-server</module>
         <module>eureka-server</module>
         <module>auth-server</module>
-        <module>accounts-service</module>
-        <module>transactions-service</module>
-        <module>notification-service</module>
-        <module>bff-service</module>
         <module>gateway</module>
+        <!-- Microservicios de negocio -->
+        <module>customers-service</module>
+        <module>accounts-service</module>
+        <module>payments-service</module>
+        <module>notification-service</module>
+        <!-- Backend for Frontend (uno por canal) -->
+        <module>bff-web</module>
+        <module>bff-mobile</module>
+        <module>bff-atm</module>
+        <!-- Procesos batch migrados desde el legacy -->
+        <module>batch-service</module>
     </modules>
 
     <dependencyManagement>

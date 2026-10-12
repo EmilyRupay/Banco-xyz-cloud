@@ -1,0 +1,31 @@
+sequenceDiagram
+    autonumber
+    actor U as Cliente Web
+    participant G as Gateway (HTTPS)
+    participant B as bff-web
+    participant P as payments-service
+    participant A as accounts-service
+    participant K as Kafka
+    participant N as notification-service
+    U->>G: POST /web/transfers (JWT scope web+bank.write)
+    G->>G: valida firma JWT y scope
+    G->>B: reenvia (lb://bff-web)
+    B->>P: POST /payments/transfers + Idempotency-Key + JWT
+    P->>P: guarda Operacion PENDIENTE (id = Idempotency-Key)
+    P->>A: DEBITO origen (operacionId KEY:DB)
+    A->>A: SELECT FOR UPDATE, valida saldo, registra operacion
+    A-->>P: 200 saldoResultante
+    P->>A: CREDITO destino (KEY:CR)
+    alt destino OK
+        A-->>P: 200
+        P->>P: movimientos + Operacion COMPLETADA
+        P--)K: transactions.completed
+        K--)N: notificacion PUSH
+        P-->>B: 201 COMPLETADA
+    else destino falla (cerrada / caida)
+        A-->>P: 409 / error
+        P->>A: COMPENSACION: CREDITO origen (KEY:RV)
+        P->>P: Operacion REVERTIDA
+        P-->>B: 409/503 REVERTIDA
+    end
+    B-->>U: respuesta

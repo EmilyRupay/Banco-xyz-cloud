@@ -1,0 +1,40 @@
+# Configuracion de PRUEBAS: H2 en memoria, sin Config Server ni Eureka
+spring:
+  application:
+    name: batch-service
+  cloud:
+    config:
+      enabled: false
+  datasource:
+    url: jdbc:h2:mem:batchdb;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-bank.sql
+  batch:
+    job:
+      enabled: false
+    jdbc:
+      initialize-schema: always
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://localhost:9000/oauth2/jwks
+
+eureka:
+  client:
+    enabled: false
+
+bank:
+  batch:
+    input-dir: classpath:legacy-data/semana_3
+    output-dir: target/batch-output-test
+    chunk-size: 100
+    grid-size: 4
+    threads: 4
+    umbral-monto-alto: 2500
+    auto-restart:
+      enabled: false

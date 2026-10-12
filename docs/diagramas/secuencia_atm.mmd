@@ -1,0 +1,18 @@
+sequenceDiagram
+    autonumber
+    participant ATM as Cajero ATM-001
+    participant G as Gateway
+    participant B as bff-atm
+    participant P as payments-service
+    participant A as accounts-service
+    ATM->>G: POST /atm/withdrawals<br/>JWT(scope atm) + X-ATM-ID + Idempotency-Key
+    G->>B: reenvia
+    B->>B: AtmTerminalFilter: terminal registrado + auditoria
+    B->>B: valida monto (5.000 - 200.000, multiplo de 5.000)
+    B->>P: POST /payments/withdrawals (X-Channel ATM)
+    P->>A: DEBITO idempotente
+    A-->>P: saldo
+    P-->>B: COMPLETADA
+    B-->>ATM: dispensar=true, saldoDisponible
+    Note over ATM,B: Si se corta la red, el cajero reintenta con la MISMA llave:<br/>payments devuelve el resultado original y NO debita dos veces
+    Note over B,P: Si payments no responde: CircuitBreaker -> fallback<br/>dispensar=false "No se dispenso dinero" (503)

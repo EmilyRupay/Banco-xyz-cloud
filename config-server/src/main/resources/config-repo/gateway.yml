@@ -5,26 +5,58 @@ spring:
   cloud:
     gateway:
       routes:
-        # --- Canales BFF (cada frontend consume su propia ruta) ---
+        # --- Emision de tokens OAuth2 a traves del Gateway (HTTPS) ---
+        - id: auth-server
+          uri: ${AUTH_SERVER_URL:http://localhost:9000}
+          predicates:
+            - Path=/oauth2/**,/.well-known/**
+
+        # --- Canales BFF: cada frontend consume SU backend ---
         - id: bff-web
-          uri: lb://bff-service
+          uri: lb://bff-web
           predicates:
             - Path=/web/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: bffWeb
+                fallbackUri: forward:/fallback/bff-web
         - id: bff-mobile
-          uri: lb://bff-service
+          uri: lb://bff-mobile
           predicates:
             - Path=/mobile/**
-        # --- Acceso directo a microservicios (StripPrefix quita el "/api") ---
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: bffMobile
+                fallbackUri: forward:/fallback/bff-mobile
+        - id: bff-atm
+          uri: lb://bff-atm
+          predicates:
+            - Path=/atm/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: bffAtm
+                fallbackUri: forward:/fallback/bff-atm
+
+        # --- Acceso directo a microservicios (backoffice/admin). StripPrefix quita el "/api" ---
         - id: accounts-service
           uri: lb://accounts-service
           predicates:
             - Path=/api/accounts/**
           filters:
             - StripPrefix=1
-        - id: transactions-service
-          uri: lb://transactions-service
+        - id: payments-service
+          uri: lb://payments-service
           predicates:
-            - Path=/api/transactions/**
+            - Path=/api/payments/**
+          filters:
+            - StripPrefix=1
+        - id: customers-service
+          uri: lb://customers-service
+          predicates:
+            - Path=/api/customers/**
           filters:
             - StripPrefix=1
         - id: notification-service
@@ -33,3 +65,16 @@ spring:
             - Path=/api/notifications/**
           filters:
             - StripPrefix=1
+        - id: batch-service
+          uri: lb://batch-service
+          predicates:
+            - Path=/api/batch/**
+          filters:
+            - StripPrefix=1
+
+    # Balanceo de carga entre instancias registradas en Eureka (round robin) y cache de instancias
+    loadbalancer:
+      cache:
+        ttl: 10s
+
+# El CircuitBreaker por canal (ventana, umbral, TimeLimiter de 10 s) se define en gateway/CircuitBreakerConfig.java

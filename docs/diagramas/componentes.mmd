@@ -1,0 +1,35 @@
+flowchart LR
+    subgraph PAY["payments-service"]
+        direction TB
+        PC[PaymentController] --> PS[PaymentService<br/>SAGA + compensacion]
+        PS --> ACl[AccountsClient<br/>Retry + CircuitBreaker]
+        PS --> OR[(Operaciones<br/>idempotencia)]
+        PS --> MR[(Movimientos)]
+        PS --> DF[DetectorFraude]
+        PS --> EP[EventPublisher<br/>Kafka]
+    end
+    subgraph ACC["accounts-service"]
+        direction TB
+        CC[CuentaController] --> CSv[CuentaService<br/>SELECT FOR UPDATE]
+        CSv --> CR[(Cuentas)]
+        CSv --> OA[(OperacionAplicada<br/>idempotencia)]
+        CSv --> CuC[CustomersClient<br/>Resilience4j]
+        CSv --> EP2[EventPublisher]
+    end
+    subgraph BAT["batch-service"]
+        direction TB
+        BC[BatchController<br/>ReportController] --> JL[JobLauncherService]
+        SCH[BatchScheduler] --> JL
+        JL --> JOBS[3 Jobs<br/>reader / processor / writer]
+        JOBS --> DOM[domain: reglas legacy<br/>Validadores + Calculadora]
+        JOBS --> AR[AutoRestartJobListener]
+        JOBS --> JR[(JobRepository)]
+    end
+    subgraph BFFs["BFF por canal"]
+        direction TB
+        WC[WebController] --> WS[WebService<br/>agregacion]
+        MC[MobileController<br/>ETag + Cache]
+        ATF[AtmTerminalFilter] --> AtC[AtmController]
+    end
+    BFFs -->|HTTP lb://| PAY
+    ACl -->|HTTP lb://| ACC

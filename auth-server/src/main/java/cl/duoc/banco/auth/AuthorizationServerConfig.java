@@ -96,43 +96,32 @@ public class AuthorizationServerConfig {
     }
 
     /**
-     * Clientes OAuth2 registrados.
-     *  - web-client / mobile-client : aplicaciones frontend (client_credentials), cada una con su scope de canal.
-     *  - admin-client               : acceso completo (lectura y escritura).
-     *  - postman-client             : flujo authorization_code con usuario (para probar con Postman).
+     * Clientes OAuth2 registrados: UN CLIENTE POR CANAL, cada uno con sus propios scopes (autorizacion por canal).
+     * <pre>
+     *  web-client     : navegador          -> web, bank.read, bank.write        (token 30 min)
+     *  mobile-client  : app movil          -> mobile, bank.read                 (token 30 min, solo lectura)
+     *  atm-client     : red de cajeros     -> atm, bank.read, bank.write        (token 5 min: canal critico)
+     *  admin-client   : backoffice/ops     -> todos + batch.admin
+     *  postman-client : authorization_code con usuario (pruebas manuales)
+     * </pre>
      */
     @Bean
     public RegisteredClientRepository registeredClientRepository(PasswordEncoder encoder) {
         TokenSettings tokens = TokenSettings.builder()
                 .accessTokenTimeToLive(Duration.ofMinutes(30))
                 .build();
-
-        RegisteredClient web = RegisteredClient.withId(UUID.randomUUID().toString())
-                .clientId("web-client")
-                .clientSecret(encoder.encode("web-secret"))
-                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
-                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-                .scope("web").scope("bank.read")
-                .tokenSettings(tokens)
+        TokenSettings tokensAtm = TokenSettings.builder()
+                .accessTokenTimeToLive(Duration.ofMinutes(5))
                 .build();
 
-        RegisteredClient mobile = RegisteredClient.withId(UUID.randomUUID().toString())
-                .clientId("mobile-client")
-                .clientSecret(encoder.encode("mobile-secret"))
-                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
-                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-                .scope("mobile").scope("bank.read")
-                .tokenSettings(tokens)
-                .build();
-
-        RegisteredClient admin = RegisteredClient.withId(UUID.randomUUID().toString())
-                .clientId("admin-client")
-                .clientSecret(encoder.encode("admin-secret"))
-                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
-                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-                .scope("web").scope("mobile").scope("bank.read").scope("bank.write")
-                .tokenSettings(tokens)
-                .build();
+        RegisteredClient web = clienteCredenciales("web-client", "web-secret", encoder, tokens,
+                "web", "bank.read", "bank.write");
+        RegisteredClient mobile = clienteCredenciales("mobile-client", "mobile-secret", encoder, tokens,
+                "mobile", "bank.read");
+        RegisteredClient atm = clienteCredenciales("atm-client", "atm-secret", encoder, tokensAtm,
+                "atm", "bank.read", "bank.write");
+        RegisteredClient admin = clienteCredenciales("admin-client", "admin-secret", encoder, tokens,
+                "web", "mobile", "atm", "bank.read", "bank.write", "batch.admin");
 
         RegisteredClient postman = RegisteredClient.withId(UUID.randomUUID().toString())
                 .clientId("postman-client")
@@ -142,12 +131,26 @@ public class AuthorizationServerConfig {
                 .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
                 .redirectUri("https://oauth.pstmn.io/v1/callback")
                 .scope(OidcScopes.OPENID)
-                .scope("web").scope("mobile").scope("bank.read").scope("bank.write")
+                .scope("web").scope("mobile").scope("atm").scope("bank.read").scope("bank.write").scope("batch.admin")
                 .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
                 .tokenSettings(tokens)
                 .build();
 
-        return new InMemoryRegisteredClientRepository(web, mobile, admin, postman);
+        return new InMemoryRegisteredClientRepository(web, mobile, atm, admin, postman);
+    }
+
+    private static RegisteredClient clienteCredenciales(String id, String secreto, PasswordEncoder encoder,
+                                                        TokenSettings tokens, String... scopes) {
+        RegisteredClient.Builder b = RegisteredClient.withId(UUID.randomUUID().toString())
+                .clientId(id)
+                .clientSecret(encoder.encode(secreto))
+                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+                .tokenSettings(tokens);
+        for (String scope : scopes) {
+            b.scope(scope);
+        }
+        return b.build();
     }
 
     /** Llave RSA generada al iniciar. Si el servidor se reinicia, los tokens anteriores dejan de ser validos. */

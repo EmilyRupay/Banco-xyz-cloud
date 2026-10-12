@@ -9,4 +9,34 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    open-in-view: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+
+# Llamadas a customers-service (validar titular al abrir una cuenta)
+resilience4j:
+  circuitbreaker:
+    instances:
+      customers:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+        ignore-exceptions:
+          - org.springframework.web.server.ResponseStatusException
+  retry:
+    instances:
+      customers:
+        max-attempts: 3
+        wait-duration: 300ms
+        ignore-exceptions:
+          - org.springframework.web.server.ResponseStatusException
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException

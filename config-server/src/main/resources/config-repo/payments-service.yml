@@ -1,0 +1,52 @@
+server:
+  port: 8082
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:5432/payments_db
+    username: ${DB_USER:bank}
+    password: ${DB_PASSWORD:bank123}
+  jpa:
+    hibernate:
+      ddl-auto: update
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all                       # el broker confirma solo cuando todas las replicas tienen el mensaje
+      properties:
+        enable.idempotence: true      # sin duplicados por reintentos del productor
+
+bank:
+  fraude:
+    monto-alto: 1000000               # operaciones >= $1.000.000 generan alerta de seguridad
+    max-retiros-atm: 3                # mas de 3 retiros en cajero...
+    ventana: 10m                      # ...en 10 minutos generan alerta
+
+# Llamadas a accounts-service (debitos/creditos). Reintentar es seguro: accounts es idempotente por operacionId.
+resilience4j:
+  circuitbreaker:
+    instances:
+      accounts:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 2s
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+        ignore-exceptions:
+          - cl.duoc.banco.payments.OperacionException$Rechazada
+  retry:
+    instances:
+      accounts:
+        max-attempts: 3
+        wait-duration: 500ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        ignore-exceptions:
+          - cl.duoc.banco.payments.OperacionException$Rechazada
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException

@@ -1,0 +1,18 @@
+flowchart TB
+    subgraph J1["JOB 1 · reporteTransaccionesDiariasJob (fechaProceso)"]
+        direction LR
+        a1[prepararDiarioStep<br/>limpia resultados previos] --> a2[validarTransaccionesStep<br/>chunk 200 · retry 3 · skip] --> a3[resumenDiarioStep<br/>totales por fecha] --> a4[exportar CSV<br/>resumen + anomalias]
+    end
+    subgraph J2["JOB 2 · calculoInteresesMensualesJob (periodo)"]
+        direction LR
+        b1[prepararInteresesStep] --> b2[cargarCuentasStep<br/>valida + quita duplicados] --> b3{{calcularInteresesStep<br/>PARTICIONADO · 4 hilos}} --> b4[exportar CSV<br/>intereses]
+    end
+    subgraph J3["JOB 3 · estadosCuentaAnualesJob (anio)"]
+        direction LR
+        c1[cargarMovimientosAnualesStep<br/>chunk MULTIHILO · 4 hilos] --> c2[generarEstadosStep<br/>totales por cuenta] --> c3[exportar CSV<br/>estados de cuenta]
+    end
+    subgraph FT["Politica ante fallos"]
+        direction LR
+        f1{{Job FAILED}} -->|AutoRestartJobListener<br/>20 s · max 2 intentos| f2[Reinicio de la misma JobInstance<br/>desde el ultimo commit]
+    end
+    J1 ~~~ J2 ~~~ J3 ~~~ FT

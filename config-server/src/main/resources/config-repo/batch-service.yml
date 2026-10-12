@@ -1,0 +1,48 @@
+server:
+  port: 8090
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:5432/batch_db
+    username: ${DB_USER:bank}
+    password: ${DB_PASSWORD:bank123}
+    hikari:
+      maximum-pool-size: 10        # >= hilos del batch + API
+      connection-timeout: 5000
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-bank.sql
+  batch:
+    job:
+      enabled: false               # los jobs se lanzan por API, scheduler o runner de demo
+    jdbc:
+      initialize-schema: always    # crea las tablas BATCH_* (JobRepository) en PostgreSQL
+
+bank:
+  batch:
+    input-dir: ${BATCH_INPUT_DIR:classpath:legacy-data/semana_3}
+    output-dir: ${BATCH_OUTPUT_DIR:./batch-output}
+    chunk-size: 200
+    grid-size: 4
+    threads: 4
+    skip-limit: 1000
+    retry-limit: 3
+    umbral-monto-alto: 2500
+    tasas-anuales:
+      ahorro: 0.03
+      prestamo: 0.18
+      hipoteca: 0.042
+    auto-restart:
+      enabled: true
+      max-attempts: 2
+      delay: 20s
+    demo:
+      run-on-startup: ${BATCH_RUN_ON_STARTUP:false}
+      periodo: 2024-12
+      anio: 2024
+    scheduling:
+      enabled: ${BATCH_SCHEDULING_ENABLED:false}
+      cron-diario: "0 0 1 * * *"
+      cron-mensual: "0 0 2 1 * *"
+      cron-anual: "0 0 3 2 1 *"

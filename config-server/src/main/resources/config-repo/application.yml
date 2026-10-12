@@ -1,13 +1,17 @@
 # ============================================================
 # Configuracion COMPARTIDA por todos los clientes del Config Server
-# (los valores ${VAR:default} se sobreescriben con variables de entorno en Docker)
+# (los valores ${VAR:default} se sobreescriben con variables de entorno en Docker / AWS)
 # ============================================================
 eureka:
   client:
     service-url:
       defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    registry-fetch-interval-seconds: 10
   instance:
     prefer-ip-address: true
+    # id unico por instancia: permite escalar horizontalmente (docker compose --scale servicio=N)
+    instance-id: ${spring.application.name}:${random.uuid}
+    lease-renewal-interval-in-seconds: 10
 
 spring:
   security:
@@ -16,9 +20,42 @@ spring:
         jwt:
           # Cada microservicio valida la firma del JWT con las llaves publicas del Auth Server
           jwk-set-uri: ${JWK_SET_URI:http://localhost:9000/oauth2/jwks}
+  kafka:
+    template:
+      observation-enabled: true      # propaga el traceId dentro de los mensajes Kafka
+    listener:
+      observation-enabled: true
+  jpa:
+    open-in-view: false
 
+server:
+  error:
+    include-message: always          # el mensaje de negocio viaja al servicio que llama (ej. "Saldo insuficiente")
+  shutdown: graceful                 # termina las peticiones en curso antes de detenerse (despliegues sin cortes)
+
+bank:
+  topics:
+    transaction-completed: transactions.completed
+    security-alerts: security.alerts
+    account-events: accounts.events
+
+# ---------------- Monitoreo ----------------
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,circuitbreakers,retries,bulkheads
+        include: health,info,prometheus,metrics,circuitbreakers,circuitbreakerevents,retries,bulkheads
+  endpoint:
+    health:
+      probes:
+        enabled: true                # /actuator/health/liveness y /readiness (ECS / Kubernetes)
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: ${TRACING_PROBABILITY:0.0}   # 1.0 con el perfil de monitoreo (Zipkin)
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_URL:http://localhost:9411/api/v2/spans}
+# Spring Boot 3.3 agrega automaticamente [aplicacion,traceId,spanId] a cada linea de log (micrometer-tracing)

@@ -1,0 +1,54 @@
+# =====================================================================================
+# Override para AWS: usa servicios ADMINISTRADOS en lugar de contenedores locales.
+#   - Amazon RDS for PostgreSQL  (reemplaza al contenedor postgres)
+#   - Amazon MSK (Kafka)          (reemplaza al contenedor kafka)
+#   - Imagenes desde Amazon ECR   (no se compila en el servidor)
+#   - Logs en Amazon CloudWatch
+# Uso:
+#   export REGISTRY=<cuenta>.dkr.ecr.us-east-1.amazonaws.com TAG=latest
+#   export DB_HOST=<endpoint-rds> KAFKA_BOOTSTRAP_SERVERS=<brokers-msk>
+#   docker compose -f docker-compose.yaml -f deploy/aws/docker-compose.aws.yml up -d \
+#     config-server eureka-server auth-server customers-service accounts-service payments-service \
+#     notification-service batch-service bff-web bff-mobile bff-atm gateway
+# =====================================================================================
+x-aws-logs: &aws-logs
+  logging:
+    driver: awslogs
+    options:
+      awslogs-region: ${AWS_REGION:-us-east-1}
+      awslogs-group: /banco-xyz
+      awslogs-create-group: "true"
+
+services:
+  config-server:        { <<: *aws-logs, image: "${REGISTRY}/banco-xyz/config-server:${TAG:-latest}" }
+  eureka-server:        { <<: *aws-logs, image: "${REGISTRY}/banco-xyz/eureka-server:${TAG:-latest}" }
+  auth-server:          { <<: *aws-logs, image: "${REGISTRY}/banco-xyz/auth-server:${TAG:-latest}" }
+  bff-web:              { <<: *aws-logs, image: "${REGISTRY}/banco-xyz/bff-web:${TAG:-latest}" }
+  bff-mobile:           { <<: *aws-logs, image: "${REGISTRY}/banco-xyz/bff-mobile:${TAG:-latest}" }
+  bff-atm:              { <<: *aws-logs, image: "${REGISTRY}/banco-xyz/bff-atm:${TAG:-latest}" }
+  gateway:              { <<: *aws-logs, image: "${REGISTRY}/banco-xyz/gateway:${TAG:-latest}" }
+  customers-service:
+    <<: *aws-logs
+    image: "${REGISTRY}/banco-xyz/customers-service:${TAG:-latest}"
+    environment: { DB_HOST: "${DB_HOST}", DB_USER: "${DB_USER}", DB_PASSWORD: "${DB_PASSWORD}", KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_BOOTSTRAP_SERVERS}" }
+    depends_on: !reset {}
+  accounts-service:
+    <<: *aws-logs
+    image: "${REGISTRY}/banco-xyz/accounts-service:${TAG:-latest}"
+    environment: { DB_HOST: "${DB_HOST}", DB_USER: "${DB_USER}", DB_PASSWORD: "${DB_PASSWORD}", KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_BOOTSTRAP_SERVERS}" }
+    depends_on: !reset {}
+  payments-service:
+    <<: *aws-logs
+    image: "${REGISTRY}/banco-xyz/payments-service:${TAG:-latest}"
+    environment: { DB_HOST: "${DB_HOST}", DB_USER: "${DB_USER}", DB_PASSWORD: "${DB_PASSWORD}", KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_BOOTSTRAP_SERVERS}" }
+    depends_on: !reset {}
+  notification-service:
+    <<: *aws-logs
+    image: "${REGISTRY}/banco-xyz/notification-service:${TAG:-latest}"
+    environment: { KAFKA_BOOTSTRAP_SERVERS: "${KAFKA_BOOTSTRAP_SERVERS}" }
+    depends_on: !reset {}
+  batch-service:
+    <<: *aws-logs
+    image: "${REGISTRY}/banco-xyz/batch-service:${TAG:-latest}"
+    environment: { DB_HOST: "${DB_HOST}", DB_USER: "${DB_USER}", DB_PASSWORD: "${DB_PASSWORD}" }
+    depends_on: !reset {}

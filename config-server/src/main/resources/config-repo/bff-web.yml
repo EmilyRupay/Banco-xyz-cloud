@@ -1,0 +1,53 @@
+# BFF WEB: respuestas completas; tolera esperas un poco mas largas (3 intentos)
+server:
+  port: 8084
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+        ignore-exceptions:
+          - org.springframework.web.server.ResponseStatusException
+    instances:
+      accounts:
+        base-config: default
+      payments:
+        base-config: default
+      customers:
+        base-config: default
+  retry:
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 500ms
+        # Si el circuito esta abierto no tiene sentido reintentar
+        ignore-exceptions:
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+          - org.springframework.web.server.ResponseStatusException
+    instances:
+      accounts:
+        base-config: default
+      payments:
+        base-config: default
+      customers:
+        base-config: default
+  bulkhead:
+    configs:
+      default:
+        max-concurrent-calls: 20
+        max-wait-duration: 0
+    instances:
+      accounts:
+        base-config: default
+      payments:
+        base-config: default
+      customers:
+        base-config: default

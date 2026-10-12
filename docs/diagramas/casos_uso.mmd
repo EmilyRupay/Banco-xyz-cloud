@@ -1,0 +1,28 @@
+flowchart TB
+    subgraph G1["Canales digitales"]
+        direction LR
+        CW(("Cliente Web")) --- UC1([Ver panel: perfil, cuentas y movimientos])
+        CW --- UC2([Transferir entre cuentas])
+        CM(("Cliente Movil")) --- UC3([Consultar resumen ligero de cuenta])
+        CA(("Cliente en Cajero")) --- UC4([Consultar saldo en cajero])
+        CA --- UC5([Retirar dinero en cajero])
+    end
+    subgraph G2["Backoffice"]
+        direction LR
+        EJ(("Ejecutivo")) --- UC6([Registrar / actualizar cliente])
+        EJ --- UC7([Abrir, bloquear o cerrar cuenta])
+        EJ --- UC8([Depositar / pagar])
+    end
+    subgraph G3["Procesos batch"]
+        direction LR
+        OP(("Operador / Scheduler")) --- UC9([Reporte de transacciones diarias])
+        OP --- UC10([Calculo de intereses mensuales])
+        OP --- UC11([Estados de cuenta anuales])
+        OP --- UC12([Reiniciar job fallido])
+    end
+    subgraph G4["Eventos"]
+        direction LR
+        UC13([Recibir notificaciones y alertas de seguridad]) --- CL(("Cliente / Seguridad"))
+    end
+    G1 -.->|transferencias y retiros generan eventos| G4
+    G2 -.->|depositos, pagos, bloqueos generan eventos| G4

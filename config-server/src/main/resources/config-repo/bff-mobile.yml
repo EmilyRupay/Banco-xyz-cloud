@@ -1,0 +1,51 @@
+# BFF MOVIL: un solo reintento rapido; se prefiere responder con datos parciales
+server:
+  port: 8085
+  compression:
+    enabled: true            # gzip: menos bytes por la red movil
+    min-response-size: 512
+    mime-types: application/json
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+        ignore-exceptions:
+          - org.springframework.web.server.ResponseStatusException
+    instances:
+      accounts:
+        base-config: default
+      payments:
+        base-config: default
+  retry:
+    configs:
+      default:
+        max-attempts: 2
+        wait-duration: 200ms
+        # Si el circuito esta abierto no tiene sentido reintentar
+        ignore-exceptions:
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+          - org.springframework.web.server.ResponseStatusException
+    instances:
+      accounts:
+        base-config: default
+      payments:
+        base-config: default
+  bulkhead:
+    configs:
+      default:
+        max-concurrent-calls: 20
+        max-wait-duration: 0
+    instances:
+      accounts:
+        base-config: default
+      payments:
+        base-config: default

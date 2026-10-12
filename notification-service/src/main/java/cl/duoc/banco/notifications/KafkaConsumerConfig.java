@@ -13,7 +13,7 @@ import org.springframework.util.backoff.FixedBackOff;
 @Configuration
 public class KafkaConsumerConfig {
 
-    /** Reintentos controlados: 3 reintentos, 1 segundo entre cada uno. Luego el mensaje va a "<topic>.DLT". */
+    /** Reintentos controlados: 3 reintentos, 1 segundo entre cada uno. Luego el mensaje va a "<topico>.DLT". */
     @Bean
     public DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<Object, Object> template) {
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(template);
@@ -21,8 +21,33 @@ public class KafkaConsumerConfig {
     }
 
     @Bean
-    public NewTopic deadLetterTopic(
-            @Value("${bank.topics.transaction-created:transactions.created}") String topic) {
-        return TopicBuilder.name(topic + ".DLT").partitions(3).replicas(1).build();
+    public NewTopic transaccionesDlt(@Value("${bank.topics.transaction-completed:transactions.completed}") String t) {
+        return TopicBuilder.name(t + ".DLT").partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic alertasDlt(@Value("${bank.topics.security-alerts:security.alerts}") String t) {
+        return TopicBuilder.name(t + ".DLT").partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic cuentasDlt(@Value("${bank.topics.account-events:accounts.events}") String t) {
+        return TopicBuilder.name(t + ".DLT").partitions(3).replicas(1).build();
+    }
+
+    /** Los topicos de origen tambien se declaran aqui por si el consumidor inicia antes que los productores. */
+    @Bean
+    public NewTopic transacciones(@Value("${bank.topics.transaction-completed:transactions.completed}") String t) {
+        return TopicBuilder.name(t).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic alertas(@Value("${bank.topics.security-alerts:security.alerts}") String t) {
+        return TopicBuilder.name(t).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic cuentas(@Value("${bank.topics.account-events:accounts.events}") String t) {
+        return TopicBuilder.name(t).partitions(3).replicas(1).build();
     }
 }

@@ -1,0 +1,52 @@
+flowchart TB
+    subgraph Canales["Canales"]
+        direction LR
+        W[Navegador Web]
+        M[App Movil]
+        A[Cajero ATM]
+    end
+    subgraph Borde["Capa de borde"]
+        direction LR
+        G["API Gateway :8443<br/>HTTPS TLS 1.3 · JWT + scope por canal<br/>enrutamiento lb:// · CircuitBreaker · Retry"]
+        AS["Auth Server :9000<br/>OAuth2 · emite JWT firmado RSA"]
+    end
+    subgraph BFF["Backend for Frontend (independientes)"]
+        direction LR
+        BW["bff-web :8084<br/>respuesta completa"]
+        BM["bff-mobile :8085<br/>ligera · gzip · ETag"]
+        BA["bff-atm :8086<br/>X-ATM-ID · idempotencia"]
+    end
+    subgraph MS["Microservicios (Resource Servers, Resilience4j)"]
+        direction LR
+        CU["customers-service :8087<br/>Clientes"]
+        AC["accounts-service :8081<br/>Cuentas y saldos"]
+        PA["payments-service :8082<br/>Pagos · SAGA"]
+        BT["batch-service :8090<br/>Spring Batch"]
+    end
+    subgraph EV["Eventos"]
+        direction LR
+        K[["Apache Kafka<br/>transactions.completed · security.alerts · accounts.events"]]
+        NO["notification-service :8083<br/>consumidor + DLT"]
+    end
+    subgraph DATA["Datos"]
+        direction LR
+        PG[("PostgreSQL<br/>1 BD por servicio")]
+        CSV[/"CSV legacy<br/>fin_legacy_data"/]
+    end
+    subgraph SC["Spring Cloud"]
+        direction LR
+        CS["Config Server :8888"]
+        EU["Eureka :8761"]
+    end
+    Canales -->|HTTPS + Bearer JWT| G
+    G -.->|/oauth2/token| AS
+    G --> BW & BM & BA
+    G -->|/api/** backoffice| MS
+    BFF -->|HTTP lb:// + JWT propagado| MS
+    PA -->|debito/credito| AC
+    AC -->|valida titular| CU
+    MS -->|productores| K
+    K --> NO
+    MS --> PG
+    CSV --> BT
+    SC -.->|config + descubrimiento| MS
